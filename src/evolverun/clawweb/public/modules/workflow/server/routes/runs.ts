@@ -15,6 +15,7 @@ import { buildInterventionMessage, type InterventionAction } from "../services/i
 import type { WorkflowSpecRepository } from "../repositories/workflow-spec-repository.js";
 import { ExecutionStepLogRepository } from "../repositories/execution-step-log-repository.js";
 import { asyncHandler } from "@avernet/clawweb-shared/server/middleware/async-handler";
+import { resolveWorkflowActorId } from "@avernet/clawweb-shared/server/services/workflow-access";
 
 /**
  * Fix total_duration_ms values that were inflated 1000x by a bug in
@@ -916,10 +917,19 @@ export function createRunsRouter(
     }
   }));
 
-  /** DELETE /:flowId — delete a flow run and all related data */
+  /** DELETE /:flowId — delete a flow run and all related data (admin only) */
   router.delete("/:flowId", asyncHandler(async (req: Request, res: Response) => {
     if (!flowRunRepo || !nodeExecRepo || !eventRepo) {
       res.status(503).json({ error: "Service Unavailable", message: "Database not configured" });
+      return;
+    }
+    // Require an authenticated identity; only admins can delete flow runs.
+    if (!resolveWorkflowActorId(req) && !req.isAdmin) {
+      res.status(401).json({ error: "Unauthorized", message: "User identity required" });
+      return;
+    }
+    if (!req.isAdmin) {
+      res.status(403).json({ error: "Forbidden", message: "Only admins can delete flow runs" });
       return;
     }
     try {
