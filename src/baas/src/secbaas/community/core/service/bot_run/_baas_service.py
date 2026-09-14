@@ -459,7 +459,14 @@ class BaasBotService(BotService):
             ) from e
 
         pool_key = conn_info.target
-        headers = {"x-proxypass-token": conn_info.token}
+        headers: dict[str, str] = {"x-proxypass-token": conn_info.token}
+        if chat_metadata:
+            eval_id = chat_metadata.get("eval_id")
+            if eval_id:
+                headers["X-Eval-Id"] = str(eval_id)
+            default_tag = chat_metadata.get("default_tag")
+            if default_tag:
+                headers["X-Agentclaw-Default-Tag"] = str(default_tag)
 
         client = await self._client_pool.get(pool_key, conn_info.ws_url, headers)
         try:
@@ -546,7 +553,14 @@ class BaasBotService(BotService):
             ) from e
 
         pool_key = conn_info.target
-        headers = {"x-proxypass-token": conn_info.token}
+        headers: dict[str, str] = {"x-proxypass-token": conn_info.token}
+        if chat_metadata:
+            eval_id = chat_metadata.get("eval_id")
+            if eval_id:
+                headers["X-Eval-Id"] = str(eval_id)
+            default_tag = chat_metadata.get("default_tag")
+            if default_tag:
+                headers["X-Agentclaw-Default-Tag"] = str(default_tag)
 
         client = await self._client_pool.get(pool_key, conn_info.ws_url, headers)
         auth_token = context.build_auth_token() if context else None
