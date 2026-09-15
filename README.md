@@ -78,9 +78,9 @@ It is built for teams that need to:
 - **Application building blocks**  
   ![Apps](https://img.shields.io/badge/Apps-Planned-lightgrey)
   ![Canvas](https://img.shields.io/badge/Canvas-Available-brightgreen)
-  [![Workflow](https://img.shields.io/badge/Workflow-Available-brightgreen)](docs/taskguard.md)
+  ![Workflow](https://img.shields.io/badge/Workflow-Available-brightgreen)
   ![Extensions](https://img.shields.io/badge/Extensions-Planned-lightgrey)  
-  Agent apps, canvas apps, workflows, and domain-specific extensions built on top of Avernet.
+  Agent apps, canvas apps, workflows, and domain-specific extensions built on top of Avernet. Workflow orchestration is available through [TaskGuard](docs/taskguard.md).
 
 ## Quick Start
 
