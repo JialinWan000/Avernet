@@ -69,11 +69,11 @@ It is built for teams that need to:
 - **Shared intelligence and evolution**  
   ![Context](https://img.shields.io/badge/Context-Planned-lightgrey)
   ![Memory](https://img.shields.io/badge/Memory-Planned-lightgrey)
-  ![Orchestration](https://img.shields.io/badge/Orchestration-Planned-lightgrey)
+  ![Orchestration](https://img.shields.io/badge/Orchestration-Available-brightgreen)
   ![Evaluation](https://img.shields.io/badge/Evaluation-Available-brightgreen)
   ![Evolution](https://img.shields.io/badge/Evolution-Available-brightgreen)
 
-  Bot diagnosis, repeatable Bench evaluation, goal- or diagnosis-driven optimization, and recoverable Pack versions are available through [AgentEvolve](docs/agent-evolve.md). Context, memory, and general-purpose orchestration remain planned.
+  Bot diagnosis, repeatable Bench evaluation, goal- or diagnosis-driven optimization, and recoverable Pack versions are available through [AgentEvolve](docs/agent-evolve.md). Orchestration is available via the Avernet coordination layer. Context and memory remain planned.
 
 - **Application building blocks**  
   ![Apps](https://img.shields.io/badge/Apps-Planned-lightgrey)
