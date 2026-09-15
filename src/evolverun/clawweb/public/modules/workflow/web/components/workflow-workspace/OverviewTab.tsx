@@ -8,6 +8,7 @@ import EmptyState from '../EmptyState'
 import ErrorState from '../ErrorState'
 import { formatTimeShort, formatDuration } from '../../utils/time'
 import type { FlowRun, WorkflowTypeRow } from '@avernet/clawweb-shared/web/types'
+import TimeRangeFilter, { toTimeRange } from '../TimeRangeFilter'
 
 function MetricCell({
   label,
@@ -113,7 +114,9 @@ export default function OverviewTab({ workflow }: OverviewTabProps) {
   const [statusFilter, setStatusFilter] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [query, setQuery] = useState('')
-  const hasFilters = Boolean(statusFilter || query)
+  const [timeRange, setTimeRange] = useState('7d')
+  const timeParams = useMemo(() => toTimeRange(timeRange), [timeRange])
+  const hasFilters = Boolean(statusFilter || query || timeRange !== '7d')
   const [windowEnd] = useState(() => Math.floor(Date.now() / 1000))
   const [activeSubTab, setActiveSubTab] = useState<'runs' | 'nodes'>('runs')
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null)
@@ -151,6 +154,7 @@ export default function OverviewTab({ workflow }: OverviewTabProps) {
     status: statusFilter && statusFilter !== 'cancelled' ? statusFilter : undefined,
     statuses: statusFilter === 'cancelled' ? ['cancelled', 'canceled'] : undefined,
     query: query || undefined,
+    ...timeParams,
   })
 
   const runs = useMemo(() => data?.runs ?? [], [data?.runs])
@@ -288,6 +292,7 @@ export default function OverviewTab({ workflow }: OverviewTabProps) {
             onSubmit={(event) => { event.preventDefault(); setQuery(searchInput.trim()); setPage(0) }}
             className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3"
           >
+            <TimeRangeFilter value={timeRange} onChange={(value) => { setTimeRange(value); setPage(0) }} />
             <select aria-label="运行状态" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(0) }} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
               <option value="">全部状态</option>
               <option value="running">运行中</option>
@@ -301,7 +306,7 @@ export default function OverviewTab({ workflow }: OverviewTabProps) {
             </select>
             <input type="search" aria-label="搜索运行记录" placeholder="搜索输入内容 / Run ID / 发起方 / Bot ID" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} className="min-w-0 flex-1 basis-64 rounded-md border border-slate-200 px-3 py-2 text-xs text-slate-700 sm:max-w-sm" />
             <button type="submit" className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">搜索</button>
-            <button type="button" disabled={!hasFilters && !searchInput} onClick={() => { setStatusFilter(''); setSearchInput(''); setQuery(''); setPage(0) }} className="rounded-md px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40">重置筛选</button>
+            <button type="button" disabled={!hasFilters && !searchInput} onClick={() => { setStatusFilter(''); setSearchInput(''); setQuery(''); setTimeRange('7d'); setPage(0) }} className="rounded-md px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40">重置筛选</button>
             {!isLoading && !isError && <span className="ml-auto text-xs text-slate-400" aria-live="polite">{hasFilters ? '匹配' : '共'} {totalCount} 条</span>}
           </form>
         )}
