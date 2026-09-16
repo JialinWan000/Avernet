@@ -39,6 +39,7 @@ from agentclaw.community.core.repository.implementations.platform.task_queue imp
     TaskQueueRepository,
     _is_active_idem_conflict,
 )
+from agentclaw.community.plugins.local.tracer import NoopTracer
 
 pytestmark = pytest.mark.integration
 
@@ -993,7 +994,7 @@ def test_validation_also_applies_through_the_service_facade(repo):
     """Adopters call TaskQueueService, so the guard must hold on that path too;
     it delegates to the repository, which is where the check lives."""
     service = TaskQueueService(
-        repo, HandlerRegistry(), WorkerWakeup(), TaskQueueConfig(app=APP)
+        repo, HandlerRegistry(), WorkerWakeup(), TaskQueueConfig(app=APP), NoopTracer()
     )
     with pytest.raises(ValueError, match="exceeds"):
         service.enqueue(
@@ -1219,7 +1220,7 @@ def test_unkeyed_enqueue_still_accepts_any_task_type(repo, task_type):
 def test_padded_task_type_is_rejected_through_the_service_facade(repo):
     """Adopters call the service, so the guard has to hold on that path too."""
     service = TaskQueueService(
-        repo, HandlerRegistry(), WorkerWakeup(), TaskQueueConfig(app=APP)
+        repo, HandlerRegistry(), WorkerWakeup(), TaskQueueConfig(app=APP), NoopTracer()
     )
     with pytest.raises(ValueError, match="leading or trailing whitespace"):
         service.enqueue("job ", {}, 3600, idempotency_key="k1")
