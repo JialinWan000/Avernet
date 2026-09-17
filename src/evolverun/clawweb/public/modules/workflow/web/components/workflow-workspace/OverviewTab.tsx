@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAnalyzeRun, useAnalysisProgress, useFlowRuns, useWorkflowHealth } from '../../api/hooks'
 import AnalyzeRunBotModal from '../AnalyzeRunBotModal'
 import { SuccessTrendCard } from '../SuccessTrendCard'
+import { RunCountTrendCard } from '../RunCountTrendCard'
 import { NodeAnalysisPanel } from '../NodeAnalysisPanel'
 import StatusBadge from '../StatusBadge'
 import EmptyState from '../EmptyState'
@@ -10,6 +11,49 @@ import ErrorState from '../ErrorState'
 import { formatTimeShort, formatDuration } from '../../utils/time'
 import type { FlowRun, WorkflowTypeRow } from '@avernet/clawweb-shared/web/types'
 import TimeRangeFilter, { toTimeRange } from '../TimeRangeFilter'
+
+function TrendTabs({
+  workflowId,
+  currentSuccessRate,
+  currentDetail,
+  currentTotalRuns,
+  days,
+}: {
+  workflowId: string
+  currentSuccessRate: string
+  currentDetail: string
+  currentTotalRuns: string
+  days: 1 | 7 | 30
+}) {
+  const [tab, setTab] = useState<'success' | 'count'>('success')
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white">
+      <div className="flex items-center gap-1 border-b border-slate-100 px-3 pt-2">
+        <button
+          type="button"
+          onClick={() => setTab('success')}
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${tab === 'success' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          成功率趋势
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('count')}
+          className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${tab === 'count' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+        >
+          运行实例趋势
+        </button>
+      </div>
+      <div className="px-4 py-3">
+        {tab === 'success' ? (
+          <SuccessTrendCard workflowId={workflowId} currentSuccessRate={currentSuccessRate} currentDetail={currentDetail} compact days={days} showRangeSelector={false} embedded />
+        ) : (
+          <RunCountTrendCard workflowId={workflowId} currentTotalRuns={currentTotalRuns} days={days} embedded />
+        )}
+      </div>
+    </div>
+  )
+}
 
 function MetricCell({
   label,
@@ -207,15 +251,21 @@ function OverviewContent({ workflow }: OverviewTabProps) {
     const succeededRuns = counts.succeeded ?? 0
     const abnormalRuns = (counts.failed ?? 0) + (counts.aborted ?? 0) + (counts.cancelled ?? 0) + (counts.canceled ?? 0)
     const terminalRuns = succeededRuns + abnormalRuns
+    const runningRuns = counts.running ?? 0
+    const waitingRuns = counts.waiting ?? 0
+    const blockedRuns = counts.blocked ?? 0
+    const queuedRuns = counts.queued ?? 0
+    const totalRuns = terminalRuns + runningRuns + waitingRuns + blockedRuns + queuedRuns
     return {
       succeededRuns,
       abnormalRuns,
       terminalRuns,
       successRate: terminalRuns > 0 ? Math.round((succeededRuns / terminalRuns) * 100) : 0,
-      runningRuns: counts.running ?? 0,
-      waitingRuns: counts.waiting ?? 0,
-      blockedRuns: counts.blocked ?? 0,
-      queuedRuns: counts.queued ?? 0,
+      runningRuns,
+      waitingRuns,
+      blockedRuns,
+      queuedRuns,
+      totalRuns,
     }
   }, [metricsData?.statusCounts])
 
@@ -261,11 +311,12 @@ function OverviewContent({ workflow }: OverviewTabProps) {
           >{value === 1 ? '今天' : `${value}天`}</button>
         ))}
       </div>
-      <section aria-label="工作流关键指标" className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white lg:grid-cols-4 lg:divide-y-0">
+      <section aria-label="工作流关键指标" className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white lg:grid-cols-5 lg:divide-y-0">
         <MetricCell label="健康度" value={health ? String(health.overallScore) : '—'} detail={health ? (health.overallScore >= 80 ? '运行稳定' : health.overallScore >= 60 ? '需要关注' : '建议优先处理') : '等待健康数据'} emphasis={health && health.overallScore < 60 ? 'danger' : 'default'} />
         <MetricCell label="运行成功率" value={currentSuccessRate} detail={`近 ${days} 天 · 成功 / 终态`} />
         <MetricCell label="异常结束" value={hasMetrics ? String(stats.abnormalRuns) : '—'} detail="失败、终止或取消" emphasis={hasMetrics && stats.abnormalRuns > 0 ? 'danger' : 'default'} />
         <MetricCell label="节点耗时 P95" value={health ? formatDuration(health.p95DurationMs) : '—'} detail="最慢节点 P95 口径" />
+        <MetricCell label="总运行实例" value={hasMetrics ? String(stats.totalRuns) : '—'} detail={`近 ${days} 天 · 全部状态`} />
       </section>
 
       <section aria-label="当前运行状态" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -291,7 +342,15 @@ function OverviewContent({ workflow }: OverviewTabProps) {
       {isHealthError && <div className="rounded-lg border border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-600">健康指标加载失败；运行列表仍可继续查看。</div>}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-        {workflowId && <SuccessTrendCard workflowId={workflowId} currentSuccessRate={currentSuccessRate} currentDetail={currentDetail} compact days={days} showRangeSelector={false} />}
+        {workflowId && (
+          <TrendTabs
+            workflowId={workflowId}
+            currentSuccessRate={currentSuccessRate}
+            currentDetail={currentDetail}
+            currentTotalRuns={hasMetrics ? String(stats.totalRuns) : '—'}
+            days={days}
+          />
+        )}
         <section className="rounded-xl border border-slate-200 bg-white p-4" aria-label="运行风险摘要">
           <div className="flex items-center justify-between">
             <div><h3 className="text-sm font-semibold text-slate-900">运行风险</h3><p className="mt-0.5 text-[11px] text-slate-400">优先关注影响成功率与耗时的节点</p></div>

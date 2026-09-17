@@ -8,27 +8,21 @@ type TrendPoint = {
   successRate: number
 }
 
-export function SuccessTrendCard({
+/**
+ * 运行实例趋势卡片 — 复用 GET /api/workflows/:workflowId/success-trend API，
+ * 用每日 totalRuns 字段绘制运行实例数折线图。
+ */
+export function RunCountTrendCard({
   workflowId,
-  currentSuccessRate,
-  currentDetail,
-  compact = false,
-  days: controlledDays,
-  onDaysChange,
-  showRangeSelector = true,
+  currentTotalRuns,
+  days = 7,
   embedded = false,
 }: {
   workflowId: string
-  currentSuccessRate: string
-  currentDetail: string
-  compact?: boolean
+  currentTotalRuns: string
   days?: 1 | 7 | 30
-  onDaysChange?: (days: 7 | 30) => void
-  showRangeSelector?: boolean
   embedded?: boolean
 }) {
-  const [localDays, setLocalDays] = useState<7 | 30>(7)
-  const days = controlledDays ?? localDays
   const [data, setData] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -56,40 +50,24 @@ export function SuccessTrendCard({
     return () => { cancelled = true }
   }, [workflowId, days, requestSeq])
 
-  const changeDays = (next: 7 | 30) => {
-    if (onDaysChange) onDaysChange(next)
-    else setLocalDays(next)
-  }
-
-  // Calculate week-over-week change
   const hasTrend = data.length >= 2
   const latest = hasTrend ? data[data.length - 1] : null
   const previous = hasTrend ? data[Math.max(0, data.length - 2)] : null
   const change = latest && previous
-    ? latest.successRate - previous.successRate
+    ? latest.totalRuns - previous.totalRuns
     : null
+  const peakRuns = data.length > 0 ? Math.max(...data.map((d) => d.totalRuns)) : 0
 
   return (
     <div className={`${embedded ? '' : 'rounded-xl border border-slate-200'} bg-white px-4 py-3`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold text-slate-900">成功率趋势</span>
-          {!compact && <span className={`text-2xl font-bold ${currentSuccessRate === '—' ? 'text-gray-300' : Number(currentSuccessRate.replace('%', '')) >= 80 ? 'text-emerald-600' : Number(currentSuccessRate.replace('%', '')) >= 50 ? 'text-amber-600' : 'text-rose-600'}`}>{currentSuccessRate}</span>}
+          <span className="text-sm font-semibold text-slate-900">运行实例趋势</span>
+          <span className="text-2xl font-bold text-slate-950">{currentTotalRuns}</span>
         </div>
-        {showRangeSelector && <div className="flex items-center gap-1">
-          {[7, 30].map((d) => (
-            <button
-              key={d}
-              onClick={() => changeDays(d as 7 | 30)}
-              className={`px-2 py-0.5 text-[10px] rounded-md transition-all ${days === d ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
-            >
-              {d}天
-            </button>
-          ))}
-        </div>}
+        <span className="text-[10px] text-slate-400">近 {days} 天 · 每日实例数</span>
       </div>
 
-      {/* 折线图 */}
       {loading ? (
         <div className="h-[60px] flex items-center justify-center">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-200 border-t-blue-500" />
@@ -102,9 +80,10 @@ export function SuccessTrendCard({
       ) : data.length > 0 ? (
         <div className="relative">
           {(() => {
-            const maxRate = 100
-            const minRate = 0
-            const range = maxRate - minRate || 1
+            const maxVal = Math.max(peakRuns, 1)
+            // Use ceiling to next "nice" number for Y axis
+            const niceMax = maxVal <= 5 ? maxVal : Math.ceil(maxVal / 5) * 5
+            const range = niceMax || 1
             const W = 600
             const H = 80
             const padX = 10
@@ -113,25 +92,25 @@ export function SuccessTrendCard({
             const plotH = H - padY * 2 - 12 // extra 12 for labels
             const points = data.map((d, i) => {
               const x = data.length === 1 ? W / 2 : padX + (i / (data.length - 1)) * plotW
-              const y = padY + plotH - ((d.successRate - minRate) / range) * plotH
-              return { x, y, rate: d.successRate, date: d.date }
+              const y = padY + plotH - (d.totalRuns / range) * plotH
+              return { x, y, totalRuns: d.totalRuns, date: d.date }
             })
 
             const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ')
             const areaPath = `${linePath} L ${points[points.length - 1].x},${padY + plotH} L ${points[0].x},${padY + plotH} Z`
-            const lineColor = latest && latest.successRate >= 50 ? '#22c55e' : '#ef4444'
+            const lineColor = '#3b82f6'
 
-            // Y-axis grid lines at 0%, 50%, 100%
-            const gridLines = [0, 50, 100].map((v) => {
-              const y = padY + plotH - ((v - minRate) / range) * plotH
-              return { y, label: `${v}%` }
+            // Y-axis grid lines at 0, 50%, 100% of range
+            const gridLines = [0, Math.round(niceMax / 2), niceMax].map((v) => {
+              const y = padY + plotH - (v / range) * plotH
+              return { y, label: String(v) }
             })
 
             return (
               <>
                 <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="block">
                   <defs>
-                    <linearGradient id="successGradient" x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient id="runCountGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={lineColor} stopOpacity="0.12" />
                       <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
                     </linearGradient>
@@ -144,12 +123,12 @@ export function SuccessTrendCard({
                     </g>
                   ))}
                   {/* area */}
-                  <path d={areaPath} fill="url(#successGradient)" />
+                  <path d={areaPath} fill="url(#runCountGradient)" />
                   {/* line */}
                   <path d={linePath} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                   {/* points */}
                   {points.map((p, i) => (
-                    <circle key={i} cx={p.x} cy={p.y} r="2.5" fill={p.rate >= 50 ? '#22c55e' : '#ef4444'} stroke="white" strokeWidth="1" />
+                    <circle key={i} cx={p.x} cy={p.y} r="2.5" fill={lineColor} stroke="white" strokeWidth="1" />
                   ))}
                   {/* X-axis labels */}
                   {[0, Math.floor(points.length / 2), points.length - 1].filter((v, i, a) => a.indexOf(v) === i).map((idx) => {
@@ -165,7 +144,7 @@ export function SuccessTrendCard({
                 {/* tooltip — latest point */}
                 {latest && (
                   <div className="absolute top-0 right-0 text-[10px] text-gray-400">
-                    {latest.date.slice(5)}: {latest.successRate}% ({latest.succeededRuns}/{latest.totalRuns})
+                    {latest.date.slice(5)}: {latest.totalRuns} 个实例
                   </div>
                 )}
               </>
@@ -178,10 +157,10 @@ export function SuccessTrendCard({
 
       {/* 底部信息 */}
       <div className="mt-1 flex items-center justify-between text-xs text-gray-400">
-        <span>{currentDetail}</span>
+        <span>{hasTrend ? `峰值 ${peakRuns} 个 / 日` : '等待趋势数据'}</span>
         {change !== null && change !== 0 && (
           <span className={change > 0 ? 'text-green-500' : 'text-red-500'}>
-            {change > 0 ? '↑' : '↓'} {Math.abs(change).toFixed(1)}% 比前日
+            {change > 0 ? '↑' : '↓'} {Math.abs(change)} 比前日
           </span>
         )}
       </div>
