@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAnalyzeRun, useAnalysisProgress, useFlowRuns, useWorkflowHealth } from '../../api/hooks'
+import { useDeleteFlowRun, useRerunFlowRun } from '@avernet/clawweb-shared/web/api/hooks'
 import AnalyzeRunBotModal from '../AnalyzeRunBotModal'
+import AutoHealPanel from '../AutoHealPanel'
 import { SuccessTrendCard } from '../SuccessTrendCard'
 import { RunCountTrendCard } from '../RunCountTrendCard'
 import { NodeAnalysisPanel } from '../NodeAnalysisPanel'
@@ -75,11 +77,14 @@ function MetricCell({
   )
 }
 
-function RunRow({ run, onAnalyze, dispatching, busy, onAnalysisFinished }: { run: FlowRun; onAnalyze: (run: FlowRun) => void; dispatching: boolean; busy: boolean; onAnalysisFinished: () => unknown }) {
+function RunRow({ run, onAnalyze, onAutoHeal, dispatching, busy, onAnalysisFinished }: { run: FlowRun; onAnalyze: (run: FlowRun) => void; onAutoHeal: (run: FlowRun) => void; dispatching: boolean; busy: boolean; onAnalysisFinished: () => unknown }) {
   const navigate = useNavigate()
   const status = run.evolution_analysis_status ?? null
   const progressQuery = useAnalysisProgress(run.flow_id, status === 'analyzing')
   const progress = progressQuery.data?.progress ?? null
+  const deleteMutation = useDeleteFlowRun()
+  const rerunMutation = useRerunFlowRun()
+  const [confirming, setConfirming] = useState(false)
   useEffect(() => {
     if (status === 'analyzing' && ['completed', 'failed', 'insufficient_evidence'].includes(progressQuery.data?.status ?? '')) {
       void onAnalysisFinished()
@@ -91,6 +96,39 @@ function RunRow({ run, onAnalyze, dispatching, busy, onAnalysisFinished }: { run
   if (succeeded_count > 0) parts.push(`${succeeded_count} 成功`)
   if (failed_count > 0) parts.push(`${failed_count} 失败`)
   if (other > 0) parts.push(`${other} 其他`)
+
+  const handleDelete = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirming) {
+      setConfirming(true)
+      return
+    }
+    deleteMutation.mutate(run.flow_id)
+    setConfirming(false)
+  }, [confirming, deleteMutation, run.flow_id])
+
+  const handleCancelDelete = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setConfirming(false)
+  }, [])
+
+  const handleRerun = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    rerunMutation.mutate(run.flow_id)
+  }, [rerunMutation, run.flow_id])
+
+  const handleAutoHeal = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    onAutoHeal(run)
+  }, [onAutoHeal, run])
+
+  const handleAnalyze = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    onAnalyze(run)
+  }, [onAnalyze, run])
+
+  const isAutoHealable = ['failed', 'blocked', 'waiting'].includes(run.status)
+  const canRerun = !!run.origin_bot_id
 
   return (
     <tr
@@ -120,34 +158,81 @@ function RunRow({ run, onAnalyze, dispatching, busy, onAnalysisFinished }: { run
         {formatDuration(run.total_duration_ms)}
       </td>
       <td className="whitespace-nowrap px-4 py-2 text-xs">
-        {status === 'analyzing' ? (
-          <div className="min-w-56">
-            <div className="flex items-center gap-2 text-blue-600">
+        <div className="flex items-center gap-1.5">
+          {/* 分析状态 */}
+          {status === 'analyzing' ? (
+            <span className="inline-flex items-center gap-1 text-blue-600" title="分析中">
               <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border border-current border-t-transparent" />
-              <span className="font-medium">{progress?.message ?? '分析中'}</span>
-              {progress && <span className="text-[10px] tabular-nums text-slate-400">已用时 {formatAnalysisElapsed(progress.elapsedMs)}</span>}
-            </div>
-            {progress?.inputSummary && <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
-              <span>{`证据 ${progress.inputSummary.evidenceIncluded}/${progress.inputSummary.evidenceTotal} · 节点 ${progress.inputSummary.nodeCount}（失败 ${progress.inputSummary.failedNodeCount}）· Trace ${progress.inputSummary.traceCount}`}</span>
-              {progress.inputSummary.truncated && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-600">输入已截断</span>}
-            </div>}
-            {!progress && progressQuery.isError && <p className="mt-1 text-[10px] text-slate-400">进度暂不可用，分析仍在后台运行</p>}
-          </div>
-        ) : status === 'completed' ? (
-          <span className="text-emerald-600">已分析</span>
-        ) : status === 'failed' ? (
-          <span className="text-red-500">待分析</span>
-        ) : (
-          <span className="text-gray-300">—</span>
-        )}
-        <button
-          type="button"
-          disabled={status === 'analyzing' || busy}
-          onClick={(event) => { event.stopPropagation(); onAnalyze(run) }}
-          className="ml-2 rounded border border-blue-200 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {dispatching ? '派发中' : status === 'analyzing' ? '分析中' : status === 'completed' || status === 'failed' ? '重新分析' : '分析'}
-        </button>
+            </span>
+          ) : status === 'completed' ? (
+            <span className="text-emerald-600" title="已分析">✓</span>
+          ) : status === 'failed' ? (
+            <span className="text-red-500" title="分析失败">✗</span>
+          ) : (
+            <span className="text-gray-300">—</span>
+          )}
+          <button
+            type="button"
+            disabled={status === 'analyzing' || busy}
+            onClick={handleAnalyze}
+            className="rounded border border-blue-200 px-1.5 py-1 text-xs text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title={status === 'completed' || status === 'failed' ? '重新分析' : '分析'}
+          >
+            {dispatching ? '⏳' : '🔍'}
+          </button>
+          {/* 重跑 */}
+          {canRerun && (
+            <button
+              type="button"
+              onClick={handleRerun}
+              disabled={rerunMutation.isPending}
+              className="rounded border border-green-200 px-1.5 py-1 text-xs text-green-600 hover:border-green-400 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title="重跑：重新发送原始命令到 Bot"
+            >
+              {rerunMutation.isPending ? '⏳' : '🔄'}
+            </button>
+          )}
+          {/* 自动修复（中止） */}
+          {isAutoHealable && (
+            <button
+              type="button"
+              onClick={handleAutoHeal}
+              className="rounded border border-blue-200 px-1.5 py-1 text-xs text-blue-600 hover:border-blue-400 hover:bg-blue-50"
+              title="AI 自动诊断与修复"
+            >
+              🩹
+            </button>
+          )}
+          {/* 删除 */}
+          {confirming ? (
+            <span className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleteMutation.isPending}
+                className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleteMutation.isPending ? '删除中…' : '确认'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelDelete}
+                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+              >
+                取消
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="rounded border border-gray-200 px-1.5 py-1 text-xs text-gray-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+              title="删除此运行实例"
+            >
+              🗑
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   )
@@ -193,6 +278,7 @@ function OverviewContent({ workflow }: OverviewTabProps) {
   const [timeRange, setTimeRange] = useState(saved.timeRange)
   const timeParams = useMemo(() => toTimeRange(timeRange), [timeRange])
   const [analyzeRun, setAnalyzeRun] = useState<FlowRun | null>(null)
+  const [autoHealRun, setAutoHealRun] = useState<FlowRun | null>(null)
   const analyzeMutation = useAnalyzeRun()
   const dispatchError = analyzeMutation.isError
     ? analyzeMutation.error instanceof Error ? analyzeMutation.error.message : String(analyzeMutation.error)
@@ -310,6 +396,13 @@ function OverviewContent({ workflow }: OverviewTabProps) {
         isOpen
         onClose={() => setAnalyzeRun(null)}
       />}
+      {autoHealRun && (
+        <AutoHealPanel
+          run={autoHealRun}
+          onClose={() => setAutoHealRun(null)}
+          onRerunComplete={() => void refetch()}
+        />
+      )}
       <div className="flex items-center justify-end gap-1" aria-label="概览时间范围">
         {([1, 'yesterday', 7, 30] as const).map((value) => (
           <button
@@ -469,7 +562,7 @@ function OverviewContent({ workflow }: OverviewTabProps) {
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">环境</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">开始时间</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">耗时</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">自进化</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
@@ -478,7 +571,8 @@ function OverviewContent({ workflow }: OverviewTabProps) {
                     busy={analyzeMutation.isPending}
                     onAnalysisFinished={refetch}
                     dispatching={analyzeMutation.isPending && analyzeMutation.variables?.flowId === run.flow_id}
-                    onAnalyze={(selected) => { if (!analyzeMutation.isPending) { analyzeMutation.reset(); setAnalyzeRun(selected) } }} />
+                    onAnalyze={(selected) => { if (!analyzeMutation.isPending) { analyzeMutation.reset(); setAnalyzeRun(selected) } }}
+                    onAutoHeal={(selected) => setAutoHealRun(selected)} />
                 ))}
               </tbody>
             </table>
