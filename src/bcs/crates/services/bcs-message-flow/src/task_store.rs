@@ -20,7 +20,10 @@ pub struct TaskEntry {
     /// Durable delivery owns deadlines and status for managed tasks.
     pub managed: bool,
     pub managed_version: u64,
+    /// Process-local suppression only. Durable event dedup handles restart replay.
+    pub managed_terminal_effects_done: bool,
     pub response_content: String,
+    pub terminal_result_delivered: bool,
     response_full_content: String,
     response_strip_prefix: String,
     response_seen_tool_call: bool,
@@ -48,6 +51,11 @@ pub struct TaskStore {
 }
 
 impl TaskStore {
+    pub(crate) async fn finish_managed_terminal_effects(&self, task_id: &str) {
+        if let Some(entry) = self.tasks.write().await.get_mut(task_id) {
+            entry.managed_terminal_effects_done = true;
+        }
+    }
     pub(crate) async fn restore_managed(&self, entry: TaskEntry) -> bool {
         let mut tasks = self.tasks.write().await;
         if let Some(existing) = tasks.get_mut(&entry.task_id) {
@@ -69,6 +77,14 @@ impl TaskStore {
     pub async fn register(&self, entry: TaskEntry) {
         let task_id = entry.task_id.clone();
         self.tasks.write().await.insert(task_id, entry);
+    }
+
+    /// Keep the successful manager delivery while retrying terminal history;
+    /// a database failure must not replay the task-result network operation.
+    pub async fn record_terminal_delivery(&self, task_id: &str) {
+        if let Some(entry) = self.tasks.write().await.get_mut(task_id) {
+            entry.terminal_result_delivered = true;
+        }
     }
 
     pub async fn record_response_text(&self, task_id: &str, text: &str) {
@@ -339,10 +355,12 @@ pub fn new_task_entry(
         status: TaskLedgerStatus::Dispatched,
         managed: false,
         managed_version: 0,
+        managed_terminal_effects_done: false,
         response_content: String::new(),
         response_full_content: String::new(),
         response_strip_prefix: String::new(),
         response_seen_tool_call: false,
+        terminal_result_delivered: false,
     }
 }
 

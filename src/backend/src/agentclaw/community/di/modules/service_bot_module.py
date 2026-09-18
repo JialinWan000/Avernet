@@ -26,7 +26,11 @@ bindings exist so production routes can use ``Injected(...)``.
 """
 from __future__ import annotations
 
+from agentclaw.community.core.digital_employee.contracts import DigitalEmployeePublicationProtocol
+
 from typing import Annotated, Callable
+from agentclaw.community.api.publish_ignore_service import PublishIgnoreServiceProtocol
+from agentclaw.community.plugin_api.publish_ignore_runtime import PublishIgnoreRuntime
 
 from injector import Binder, Injector, Module, inject, provider, singleton
 
@@ -144,6 +148,7 @@ from agentclaw.community.core.service_bot.services.service_publication_facade im
 from agentclaw.community.core.service_bot.services.service_edit_lock_service import (
     ServiceEditLockService,
 )
+from agentclaw.community.core.common_config.bot_config_protocol import BotStoragePolicyProtocol
 from agentclaw.community.core.system_config import SystemConfigService
 from agentclaw.community.core.workspace.engine_sandbox import EngineSandboxRegistry
 from agentclaw.community.core.workspace.engines import create_engine_sandbox_registry
@@ -182,6 +187,32 @@ logger = get_logger()
 
 class ServiceBotModule(Module):
     """Production bindings for service_bot."""
+
+    @singleton
+    @provider
+    def publish_ignore_runtime(self, injector: Injector) -> PublishIgnoreRuntime:
+        import os
+        from agentclaw.community.plugins.community.publish_ignore_runtime import HttpPublishIgnoreRuntime
+        from agentclaw.community.plugin_api.device_adapter_transport import DeviceAdapterTransport
+
+        return HttpPublishIgnoreRuntime(
+            injector.get(BaasService), injector.get(DeviceContextResolver),
+            injector.get(DeviceAdapterTransport), injector.get(Annotated[HttpClient, QUALIFIER_GENERAL]),
+            os.environ.get("SERVICE_BOT_PUBLISH_IGNORE_SIGNING_KEY", ""),
+        )
+
+    @singleton
+    @provider
+    def publish_ignore_service(self, injector: Injector) -> PublishIgnoreServiceProtocol:
+        from agentclaw.community.core.bot_collaborator.collaborator_service_protocol import CollaboratorServiceProtocol
+        from agentclaw.community.core.service_bot.services.publish_ignore_service import PublishIgnoreService
+        from agentclaw.community.core.runtime_binding.service import RuntimeBindingResolutionService
+
+        return PublishIgnoreService(
+            injector.get(BotRepository), injector.get(RuntimeBindingResolutionService),
+            injector.get(DeviceBindingRepository), injector.get(CollaboratorServiceProtocol),
+            injector.get(PublishIgnoreRuntime), env_utils.get_current_env(),
+        )
 
     def configure(self, binder: Binder) -> None:
         binder.bind(WorkspacePathFactory, to=WorkspacePathFactory, scope=singleton)
@@ -234,6 +265,7 @@ class ServiceBotModule(Module):
         deploy_runtime: cfg.DeployRuntimeConfig,
         bot_repo: BotRepository,
         sandbox_registry: EngineSandboxRegistry,
+        storage_policy: BotStoragePolicyProtocol,
     ) -> DeployConfigComposer:
         """Select the composer for the container this deployment runs.
 
@@ -252,6 +284,7 @@ class ServiceBotModule(Module):
                     storage_path=storage_path,
                     sandbox_registry=sandbox_registry,
                     bot_repo=bot_repo,
+                    storage_policy=storage_policy,
                 )
             case DeployRuntime.ACK:
                 composer = AckDeployConfigComposer()
@@ -600,6 +633,7 @@ class ServiceBotModule(Module):
         OSS client) power the teclaw build-time file snapshot.
         """
         return PublishFlowService(
+            employee_publication_provider=lambda: injector.get(DigitalEmployeePublicationProtocol),
             bot_publish_service=bot_publish_service,
             bot_build_service=bot_build_service,
             baas_service=baas_service,

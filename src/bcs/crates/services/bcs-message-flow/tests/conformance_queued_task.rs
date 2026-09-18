@@ -20,6 +20,8 @@ mod support;
 #[path = "../../../bootstrap/bcs/src/migrations.rs"]
 #[allow(dead_code)]
 mod migrations;
+#[path = "support/queued_task_review.rs"]
+mod queued_task_review;
 
 const SESSION: &str = "group-1:task";
 fn admin() -> CallerContext { CallerContext::Human(HumanActor { actor_id:"human_operator".into(), staff_no:"operator".into() }) }
@@ -71,6 +73,10 @@ impl Fixture {
     }
 
     async fn make_flow(support: &support::FlowTestSupport, service: &Arc<ManagedMessageDelivery>, repo: &Arc<dyn MessageRepoPort>, live: &Arc<LiveDeliveryPolicy>) -> Arc<BcsMessageFlow> {
+        Self::configured_flow(support, service, repo, live, |flow| flow).await
+    }
+
+    async fn configured_flow(support: &support::FlowTestSupport, service: &Arc<ManagedMessageDelivery>, repo: &Arc<dyn MessageRepoPort>, live: &Arc<LiveDeliveryPolicy>, configure: impl FnOnce(BcsMessageFlow) -> BcsMessageFlow) -> Arc<BcsMessageFlow> {
         let group = support.group.get("group-1").await.unwrap();
         let mut flow = BcsMessageFlow::new(support.group.clone(), support.routing.clone(), support.registry.clone(),
             support.bot_delivery.clone(), support.frontend_delivery.clone())
@@ -79,7 +85,7 @@ impl Fixture {
             .with_session_management(Arc::new(sessions::StaticSessionManagement::new(
                 sessions::test_session(SESSION, "group-1", group.participants))));
         flow.delivery_policy = Some(live.clone());
-        let flow = Arc::new(flow); flow.retain_terminal_events(); flow
+        let flow = Arc::new(configure(flow)); flow.retain_terminal_events(); flow
     }
 
     async fn rows(&self) -> Vec<PersistedMessageDelivery> { self.service.snapshot(Some(SESSION)).await.unwrap() }
@@ -275,8 +281,21 @@ async fn running_abort_and_error_create_one_explicit_failure_result() {
         assert_eq!(rows.iter().filter(|r| r.semantic_projection_json["task"]["leg"] == "result").count(), 1);
         let result = rows.iter().find(|r| r.semantic_projection_json["task"]["leg"] == "result").unwrap();
         let source = f.repo.get_message_by_id(SESSION, &result.source_message_id).await.unwrap().unwrap();
-        assert_eq!(source.content["task_state"], if state == ChatEventState::Aborted { "cancelled" } else { "failed" });
-        assert!(source.content["task_result_text"].as_str().unwrap().starts_with("[task "));
+        if state == ChatEventState::Error {
+            assert_eq!(source.message_type, bcs_domain::CHAT_ERROR_MESSAGE_TYPE);
+            assert_eq!(source.content, json!("WORKER_RESULT"));
+            let expected = format!(
+                "chat-error:{}",
+                row.semantic_projection_json["task"]["task_id"]
+                    .as_str()
+                    .unwrap()
+            );
+            assert_eq!(source.client_msg_id.as_deref(), Some(expected.as_str()));
+        } else {
+            assert_eq!(source.message_type, "run_reply");
+            assert_eq!(source.content["task_state"], "cancelled");
+            assert!(source.content["task_result_text"].as_str().unwrap().starts_with("[task "));
+        }
     }
 }
 
@@ -456,7 +475,8 @@ async fn actual_runtime_orders_worker_tasks_and_manager_results_on_independent_l
         transport:f.support.bot_delivery.clone(), config:DeliveryRuntimeConfig {
             max_safe_retries:0, pause_dispatch:false, bots:Default::default(), tick:Duration::from_millis(2),
             expiry_tick:Duration::from_millis(20), io_timeout:Duration::from_secs(1), run_timeout:Duration::from_secs(60),
-            cancel_timeout:Duration::from_secs(1), max_tasks:4, max_abort_tasks:1 } };
+            cancel_timeout:Duration::from_secs(1), startup_recovery_grace:Duration::ZERO,
+            max_tasks:4, max_abort_tasks:1 } };
     let (stop, shutdown) = tokio::sync::watch::channel(false);
     let job = tokio::spawn(worker.run(shutdown));
     f.wait_frames(1).await;

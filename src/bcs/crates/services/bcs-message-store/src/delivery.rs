@@ -166,7 +166,7 @@ pub(crate) fn validate_admission(
     if let Some(display) = &command.display_message {
         let m = &display.message;
         crate::mysql::serialize_visibility(m).map_err(|e| MessageDeliveryRepoError::Invalid(e.to_string()))?;
-        if command.message.message_type != "run_reply" || command.event.is_some()
+        if !matches!(command.message.message_type.as_str(), "run_reply" | bcs_domain::CHAT_ERROR_MESSAGE_TYPE) || command.event.is_some()
             || m.message_type != "chat" || m.session_id != command.message.session_id
             || m.group_id != command.message.group_id || m.sender_id != command.message.sender_id
             || m.sender_type != command.message.sender_type || m.owner_bot_id != command.message.owner_bot_id
@@ -186,6 +186,22 @@ pub(crate) fn validate_admission(
     if command.message.message_type == "run_reply" && command.event.is_some() {
         return Err(MessageDeliveryRepoError::Invalid("run reply must not publish a message event".into()));
     }
+    let task_error_target = command.flow_kind
+        == bcs_domain::message_delivery::DeliveryFlowKind::Task
+        && command.targets.len() == 1
+        && command.targets[0].kind == DeliveryType::Send
+        && command.targets[0].semantic_projection_json["task"]["leg"] == "result";
+    if command.message.message_type == bcs_domain::CHAT_ERROR_MESSAGE_TYPE
+        && (command.event.is_some()
+            || (!command.targets.is_empty() && !task_error_target)
+            || command.message.run_id.is_empty()
+            || !command.message.content.is_string())
+    {
+        return Err(MessageDeliveryRepoError::Invalid(
+            "chat error requires a run and display text; only a single Task result Send target is allowed"
+                .into(),
+        ));
+    }
     if command.message.message_type == "run_reply" && command.message.run_id.is_empty() {
         return Err(MessageDeliveryRepoError::Invalid("run reply requires a run identity".into()));
     }
@@ -203,12 +219,12 @@ pub(crate) fn validate_admission(
         || command.message.session_id.is_empty()
         || command.message.group_id.is_empty()
         || command.now_ms < 0
-        || command
+        || (command.message.message_type != bcs_domain::CHAT_ERROR_MESSAGE_TYPE && command
             .message
             .content
             .get("text")
             .and_then(serde_json::Value::as_str)
-            .is_none()
+            .is_none())
     {
         return Err(MessageDeliveryRepoError::Invalid(
             "canonical message identity/text is required".into(),
@@ -825,21 +841,27 @@ impl MessageDeliveryRepoPort for MySqlMessageStore {
             return Ok(result);
         }
         if matches!(kind, DeliveryWorkBatch::Expired) {
-            let columns = COLS.iter().map(|c| match *c { "semantic_projection_json" => "'{}' AS semantic_projection_json", "transport_context_json" => "NULL AS transport_context_json", c => c }).collect::<Vec<_>>().join(",");
+            let compact_columns = COLS.iter().map(|c| match *c { "semantic_projection_json" => "'{}' AS semantic_projection_json", "transport_context_json" => "NULL AS transport_context_json", c => c }).collect::<Vec<_>>().join(",");
+            let full_columns = COLS.join(",");
             // Independent status ranges preserve the expiry index ordering.
             // Successful transitions remove rows; no OFFSET or full due-set sort.
             let mut rows = Vec::new();
             let limit = limit.min(200);
-            for (status, size) in [("queued", limit.div_ceil(2)), ("pending_context", limit / 2)] {
-                let size = if status == "pending_context" && rows.is_empty() { limit } else { size };
+            let statuses = ["queued", "pending_context", "unknown", "cancel_unknown"];
+            for (index, status) in statuses.into_iter().enumerate() {
+                let remaining_statuses = statuses.len() - index;
+                let size = (limit - rows.len()).div_ceil(remaining_statuses);
                 if size == 0 { continue; }
+                // Uncertain attempts retain transport correlation metadata so
+                // their terminal audit row can still explain late callbacks.
+                let columns = if matches!(status, "unknown" | "cancel_unknown") { &full_columns } else { &compact_columns };
                 rows.extend(self.db.query(DbStatement::with_params(format!("SELECT {columns} FROM bcs_message_deliveries WHERE env = ? AND status = ? AND expire_at_ms <= ? ORDER BY expire_at_ms, delivery_id LIMIT ?"), vec![self.env.as_str().into(), status.into(), now_ms.into(), (size as i64).into()])).await.map_err(storage)?.into_iter().map(row_to_delivery).collect::<Result<Vec<_>,_>>()?);
             }
             return Ok(rows);
         }
         let mut params = vec![self.env.as_str().into(), after.into()];
         let predicate = match kind {
-            DeliveryWorkBatch::Expired => { params.push(now_ms.into()); "status IN ('queued','pending_context') AND expire_at_ms <= ?" }
+            DeliveryWorkBatch::Expired => { params.push(now_ms.into()); "status IN ('queued','pending_context','unknown','cancel_unknown') AND expire_at_ms <= ?" }
             DeliveryWorkBatch::Control => unreachable!("control classes handled above"),
             DeliveryWorkBatch::Recovery => "status IN ('dispatching','running','cancelling')",
         };

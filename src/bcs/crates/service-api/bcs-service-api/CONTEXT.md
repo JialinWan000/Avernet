@@ -2,6 +2,13 @@
 
 ## Provides
 
+BotDeliveryResult distinguishes a complete downstream rejection
+(`delivered=false`) from an uncertain transport error (`Err`). A rejection is
+terminal and is never retryable by itself; safe retry still requires the
+explicit DeliveryNotSent contract. HTTP Provider non-success responses and
+decoded `ok=false` acknowledgements use the rejection result, while missing or
+incomplete responses remain errors for Unknown handling.
+
 TaskDispatchOutcome/TaskMessageOutcome may return `queued`: the canonical source
 and target delivery have committed, but no Bot delivery result exists yet.
 Managed tasks require an explicit canonical running Session. Task completion
@@ -33,6 +40,11 @@ for internal run_reply admission; its message/event commit with summary, targets
 and lifecycle CAS. Public history excludes internal summaries before pagination;
 canonical ID reads remain unfiltered. Memory/SQL implementations and caller/test
 construction propagate this internal contract change together.
+
+Failed Group terminals admit a primary chat_error string projection and an
+optional preceding chat display companion, atomically with Failed lifecycle CAS.
+The error has no delivery targets or message.created event and never enters
+run_reply reconstruction. Bot history filters the projection before conversion.
 
 Control work_batch ignores the legacy ID cursor and reserves per-action shares
 under one total limit; timeout classes use deadline order. This internal contract

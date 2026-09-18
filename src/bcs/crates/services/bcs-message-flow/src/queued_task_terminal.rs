@@ -13,14 +13,20 @@ pub(crate) async fn commit(flow: &BcsMessageFlow, row: &PersistedMessageDelivery
     // Completion is a fact about an already authorized run. Membership changes
     // must not strand its lane; current authorization is checked before the
     // independent Manager delivery performs network I/O.
-    let tags = flow.group.get(&row.group_id).await.and_then(|group|
-        group.participants.iter().find(|p| p.bot_uuid == task.manager).map(|p| p.tags.clone())).unwrap_or_default();
+    let session = flow.session_management.as_ref()
+        .ok_or_else(|| queued_task::error("task result session service unavailable"))?
+        .get(&row.session_id).await.map_err(|e| queued_task::error(&format!("task result session read failed: {e}")))?;
+    if session.as_ref().is_some_and(|session| session.group_id != row.group_id) {
+        return Err(queued_task::error("task result session scope mismatch"));
+    }
+    let tags = session.and_then(|session| session.participants.into_iter()
+        .find(|p| p.bot_uuid == task.manager).map(|p| p.tags)).unwrap_or_default();
     let projection = crate::queued_group::QueuedGroupProjection::task_result(row, task.clone(), tags)?;
     let now = chrono::Utc::now().timestamp_millis();
     let (visibility_domain, audience) = crate::group_flow::persisted_message_visibility(
         None, &task.worker, bcs_domain::SenderType::Bot, "chat", None)?;
     let reply = bcs_service_api::port::repo::message_delivery::AdmitMessageDeliveries {
-        display_message:None, message_id:uuid::Uuid::new_v4().to_string(), event:None,
+        display_message:None, message_id:result_message_id(&task.task_id), event:None,
         message:bcs_domain::NewMessage { group_id:row.group_id.clone(), session_id:row.session_id.clone(),
             sender_id:task.worker.clone(), sender_type:bcs_domain::SenderType::Bot, message_type:"run_reply".into(),
             content:serde_json::json!({}), client_msg_id:None, owner_bot_id:None, visibility_domain, audience,
@@ -54,12 +60,37 @@ pub(crate) async fn commit(flow: &BcsMessageFlow, row: &PersistedMessageDelivery
     Err(queued_task::error("task terminal changed concurrently"))
 }
 
+/// Stable identity lets terminal callback retries read the committed result,
+/// never rebuild it from a potentially different final payload.
+pub(crate) fn result_message_id(task_id: &str) -> String { format!("task-result:{task_id}") }
+
 async fn result_admission(flow: &BcsMessageFlow, group: &bcs_domain::Group, session: &str,
     task: TaskIntent, cmd: &BotEventCommand, result_text: &str, drain: bool,
 ) -> ServiceResult<bcs_service_api::port::repo::message_delivery::AdmitMessageDeliveries> {
     let reply = queued_task::command(flow, group, session, task.clone(), result_text, None,
         &task.worker_name, drain).await?;
-    let normalized = crate::run_reply::prepare(flow, cmd, &crate::bot_event::extract_message_text(&cmd.event_payload), false).await?;
+    let normalized = if cmd.state == ChatEventState::Error {
+        let text = crate::bot_event::error_display_text(&cmd.event_payload);
+        crate::run_reply::RunReply {
+            text: text.clone(),
+            display: flow
+                .message_tracker
+                .peek_chat_buf(&crate::run_reply::chat_key(cmd))
+                .await
+                .unwrap_or_default(),
+            method: "error",
+            raw_final: text,
+            source_ids: Vec::new(),
+        }
+    } else {
+        crate::run_reply::prepare(
+            flow,
+            cmd,
+            &crate::bot_event::extract_message_text(&cmd.event_payload),
+            false,
+        )
+        .await?
+    };
     normalize_result(flow, reply, &task, cmd, result_text, normalized)
 }
 
@@ -74,14 +105,22 @@ fn normalize_result(flow: &BcsMessageFlow,
         ChatEventState::Aborted => format!("[task cancelled] {result_text}"),
         _ => format!("[task failed] {result_text}"),
     };
-    reply.message.content["task_result_text"] = serde_json::json!(result_text);
-    reply.message.content["text"] = serde_json::json!(normalized.text);
-    reply.message.content["task_state"] = serde_json::json!(match cmd.state {
-        ChatEventState::Final => "completed", ChatEventState::Aborted => "cancelled", _ => "failed",
-    });
     reply.message.run_id = cmd.run_id.clone();
-    reply.message.client_msg_id = Some(format!("task-result:{}", task.task_id));
-    reply.message.message_type = "run_reply".into();
+    if cmd.state == ChatEventState::Error {
+        reply.message.content = serde_json::Value::String(normalized.text.clone());
+        reply.message.client_msg_id = Some(format!("chat-error:{}", task.task_id));
+        reply.message.message_type = bcs_domain::CHAT_ERROR_MESSAGE_TYPE.into();
+    } else {
+        reply.message.content["task_result_text"] = serde_json::json!(result_text);
+        reply.message.content["text"] = serde_json::json!(normalized.text);
+        reply.message.content["task_state"] = serde_json::json!(match cmd.state {
+            ChatEventState::Final => "completed",
+            ChatEventState::Aborted => "cancelled",
+            _ => "failed",
+        });
+        reply.message.client_msg_id = Some(format!("task-result:{}", task.task_id));
+        reply.message.message_type = "run_reply".into();
+    }
     reply.event = None;
     if !normalized.display.is_empty() {
         let mut display = reply.message.clone();
