@@ -2470,8 +2470,9 @@ pub async fn handle_chat_abort(
         });
         let provider_bypass_headers = header_sets.next().unwrap_or_default();
         let provider_headers_match = header_sets.all(|headers| headers == provider_bypass_headers);
-        let provider_session_keys: HashSet<_> = provider_runs.iter().map(|run|
-            run.downstream_session_key.clone().unwrap_or_else(|| cmd.session_id.clone())).collect();
+        // The Provider adapter sends the canonical BCS session id. The stored
+        // downstream_session_key is the Bot WS/plugin wire scope and may still
+        // be a legacy group key, so it must not drive a Provider scope abort.
         let expected_by_downstream: HashMap<String, ActiveBotRunContext> = provider_runs
             .iter()
             .cloned()
@@ -2488,7 +2489,7 @@ pub async fn handle_chat_abort(
                 request_id: cmd.run_id.clone(),
             }),
             (true, 1, Ok(target))
-                if provider_session_keys.len() == 1 && provider_owner_matches_target(
+                if provider_owner_matches_target(
                     owners.iter().next().expect("one owner"),
                     &target,
                 ) =>
@@ -2498,7 +2499,7 @@ pub async fn handle_chat_abort(
                         target,
                         command_id: uuid::Uuid::new_v4().to_string(),
                         group_id: cmd.group_id.clone(),
-                        session_id: provider_session_keys.iter().next().cloned().unwrap_or_else(|| cmd.session_id.clone()),
+                        session_id: cmd.session_id.clone(),
                         run_id: None,
                         provider_bypass_headers,
                         timeout_ms: ABORT_DELIVERY_TIMEOUT_MS,
