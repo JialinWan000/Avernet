@@ -64,7 +64,6 @@ export function RunCountTrendCard({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-slate-900">运行实例趋势</span>
-          <span className="text-2xl font-bold text-slate-950">{currentTotalRuns}</span>
         </div>
         <span className="text-[10px] text-slate-400">近 {days} 天 · 每日实例数</span>
       </div>
