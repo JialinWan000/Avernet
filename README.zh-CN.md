@@ -200,6 +200,7 @@ ocb/
 
 ## 文档
 
+- [从零理解项目：先运行、再实操、最后读源码](docs/avernet-learning-guide.zh-CN.md)
 - [快速开始](docs/quick-start.zh-CN.md)
 - [依赖说明](docs/dependencies.zh-CN.md)
 - [Docker 指南](docs/docker.zh-CN.md)
