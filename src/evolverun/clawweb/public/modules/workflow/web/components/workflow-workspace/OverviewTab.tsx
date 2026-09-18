@@ -23,7 +23,7 @@ function TrendTabs({
   currentSuccessRate: string
   currentDetail: string
   currentTotalRuns: string
-  days: 1 | 7 | 30
+  days: 1 | 'yesterday' | 7 | 30
 }) {
   const [tab, setTab] = useState<'success' | 'count'>('success')
   return (
@@ -185,7 +185,7 @@ function readListState(workflowId: string) {
 function OverviewContent({ workflow }: OverviewTabProps) {
   const workflowId = workflow.workflow_id
   const [saved] = useState(() => readListState(workflowId))
-  const [days, setDays] = useState<1 | 7 | 30>(7)
+  const [days, setDays] = useState<1 | 'yesterday' | 7 | 30>(7)
   const [page, setPage] = useState(saved.page)
   const [statusFilter, setStatusFilter] = useState(saved.statusFilter)
   const [searchInput, setSearchInput] = useState(saved.searchInput)
@@ -203,17 +203,25 @@ function OverviewContent({ workflow }: OverviewTabProps) {
     } catch { /* Filtering still works when browser storage is disabled. */ }
   }, [workflowId, page, statusFilter, searchInput, query, timeRange])
   const hasFilters = Boolean(statusFilter || query || timeRange !== '7d')
-  const [windowEnd] = useState(() => Math.floor(Date.now() / 1000))
+  const [nowSec] = useState(() => Math.floor(Date.now() / 1000))
+  const startOfToday = useMemo(() => {
+    const d = new Date(nowSec * 1000)
+    d.setHours(0, 0, 0, 0)
+    return Math.floor(d.getTime() / 1000)
+  }, [nowSec])
+  const windowEnd = days === 'yesterday' ? startOfToday - 1 : nowSec
   const [activeSubTab, setActiveSubTab] = useState<'runs' | 'nodes'>('runs')
   const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null)
   const {
     data: health,
     isError: isHealthError,
-  } = useWorkflowHealth(workflowId, days)
+  } = useWorkflowHealth(workflowId, days === 'yesterday' ? 1 : days)
   const pageSize = 20
   const windowStart = days === 1
-    ? Math.floor(new Date(new Date().setHours(0, 0, 0, 0)).getTime() / 1000)
-    : windowEnd - days * 86400
+    ? startOfToday
+    : days === 'yesterday'
+      ? startOfToday - 86400
+      : windowEnd - days * 86400
   const {
     data: metricsData,
     isPending: isMetricsPending,
@@ -270,6 +278,7 @@ function OverviewContent({ workflow }: OverviewTabProps) {
   }, [metricsData?.statusCounts])
 
   const hasMetrics = !isMetricsPending && !isMetricsError && metricsData?.statusCounts != null
+  const rangeLabel = days === 'yesterday' ? '昨天' : `近 ${days} 天`
   const currentSuccessRate = hasMetrics && stats.terminalRuns > 0 ? `${stats.successRate}%` : '—'
   const currentDetail = hasMetrics
     ? `${stats.succeededRuns} / ${stats.terminalRuns} 个终态运行`
@@ -283,7 +292,7 @@ function OverviewContent({ workflow }: OverviewTabProps) {
   const currentPage = Math.min(page + 1, totalPages)
   const isRefreshing = isFetching || isMetricsFetching
 
-  const changeDays = (nextDays: 1 | 7 | 30) => {
+  const changeDays = (nextDays: 1 | 'yesterday' | 7 | 30) => {
     setDays(nextDays)
   }
 
@@ -302,21 +311,21 @@ function OverviewContent({ workflow }: OverviewTabProps) {
         onClose={() => setAnalyzeRun(null)}
       />}
       <div className="flex items-center justify-end gap-1" aria-label="概览时间范围">
-        {([1, 7, 30] as const).map((value) => (
+        {([1, 'yesterday', 7, 30] as const).map((value) => (
           <button
             key={value}
             type="button"
             onClick={() => changeDays(value)}
             className={`rounded-md px-3 py-1 text-xs font-medium transition ${days === value ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50'}`}
-          >{value === 1 ? '今天' : `${value}天`}</button>
+          >{value === 1 ? '今天' : value === 'yesterday' ? '昨天' : `${value}天`}</button>
         ))}
       </div>
       <section aria-label="工作流关键指标" className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white lg:grid-cols-5 lg:divide-y-0">
         <MetricCell label="健康度" value={health ? String(health.overallScore) : '—'} detail={health ? (health.overallScore >= 80 ? '运行稳定' : health.overallScore >= 60 ? '需要关注' : '建议优先处理') : '等待健康数据'} emphasis={health && health.overallScore < 60 ? 'danger' : 'default'} />
-        <MetricCell label="运行成功率" value={currentSuccessRate} detail={`近 ${days} 天 · 成功 / 终态`} />
+        <MetricCell label="运行成功率" value={currentSuccessRate} detail={`${rangeLabel} · 成功 / 终态`} />
         <MetricCell label="异常结束" value={hasMetrics ? String(stats.abnormalRuns) : '—'} detail="失败、终止或取消" emphasis={hasMetrics && stats.abnormalRuns > 0 ? 'danger' : 'default'} />
         <MetricCell label="节点耗时 P95" value={health ? formatDuration(health.p95DurationMs) : '—'} detail="最慢节点 P95 口径" />
-        <MetricCell label="总运行实例" value={hasMetrics ? String(stats.totalRuns) : '—'} detail={`近 ${days} 天 · 全部状态`} />
+        <MetricCell label="总运行实例" value={hasMetrics ? String(stats.totalRuns) : '—'} detail={`${rangeLabel} · 全部状态`} />
       </section>
 
       <section aria-label="当前运行状态" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
