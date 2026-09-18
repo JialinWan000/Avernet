@@ -290,6 +290,13 @@ class CollaboratorService(CollaboratorQueryMixin, CollaboratorServiceProtocol):
     ) -> None:
         """检查用户是否有足够的权限。
 
+        行阶梯（owner 短路 + 角色映射）：编辑器管理面（add/list/update 的
+        ADMIN 档）与内部便捷检的门。空间授予的上限是 MEMBER，任何
+        required_level 超过它的调用在此与在有效阶梯处同答，故不在此扩大
+        依赖面；需要有效阶梯语义的调用方（如 ``list_collaborators`` 的
+        名单门，锁信息路径依赖它）手边有记录，走
+        ``_check_operable_permission``。
+
         Args:
             bot_pk: Bot 主键
             user_id: 用户工号
@@ -848,11 +855,16 @@ class CollaboratorService(CollaboratorQueryMixin, CollaboratorServiceProtocol):
         if not bot:
             raise BotNotFoundError(f"Bot 不存在: bot_id={bot_id}, owner_id={owner_id}")
 
-        bot_pk = bot["id"]
-        owner_id_from_bot = bot["owner_id"]
-
-        # 2. 获取权限级别
-        level = self.get_permission_level(bot_pk, user_id, owner_id_from_bot, env)
+        # 2. 获取权限级别 — the *operable* ladder, not the raw one: this is
+        # the internal faces' judgment (the interceptor, skill center), so it
+        # answers the same question the seam's gate answers — row, then the
+        # space-derived grant for members, then the COSEC revocation recheck
+        # for row answers. Using the raw ladder here left the internal faces
+        # both granting nothing to Team Space members and still admitting
+        # editors whose Space membership had been revoked.
+        level = self.get_operable_permission_level(
+            bot=bot, user_id=user_id, env=env
+        )
 
         result = {
             "has_permission": level >= required_level,
