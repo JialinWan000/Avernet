@@ -13,6 +13,7 @@ import RunEvolutionAnalysis from '../components/evolution/RunEvolutionAnalysis'
 import AggregationProgress from '../components/workflow-workspace/AggregationProgress'
 import type { RunEvolutionAnalysisResponse, WorkflowAnalysisProgressResponse } from '@avernet/clawweb-shared/web/api/client'
 import type { FlowRun, NodeExecution } from '@avernet/clawweb-shared/web/types'
+import AutoHealPanel from '../components/AutoHealPanel'
 
 type TabId = 'nodes' | 'logs' | 'dag'
 
@@ -45,6 +46,7 @@ export default function RunDetail() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [analyzingNode, setAnalyzingNode] = useState<NodeExecution | null>(null)
   const [analyzeModalOpen, setAnalyzeModalOpen] = useState(false)
+  const [autoHealRun, setAutoHealRun] = useState<FlowRun | null>(null)
 
   const {
     data: runDetail,
@@ -180,7 +182,7 @@ export default function RunDetail() {
         </div>
       ) : run ? (
         <>
-          <RunSummaryHeader run={run} nodeCount={nodeProgress.total} succeededCount={nodeProgress.succeeded} failedCount={nodeProgress.failed} />
+          <RunSummaryHeader run={run} nodeCount={nodeProgress.total} succeededCount={nodeProgress.succeeded} failedCount={nodeProgress.failed} onAutoHeal={(selected) => setAutoHealRun(selected)} />
 
           <div className="mt-4">
             <InterventionPanel
@@ -221,6 +223,13 @@ export default function RunDetail() {
               analyzeMutation={analyzeMutation}
               isOpen={analyzeModalOpen}
               onClose={() => setAnalyzeModalOpen(false)}
+            />
+          )}
+          {autoHealRun && (
+            <AutoHealPanel
+              run={autoHealRun}
+              onClose={() => setAutoHealRun(null)}
+              onRerunComplete={() => void refetchRun()}
             />
           )}
           <div className="mt-5 border-b border-slate-200">
